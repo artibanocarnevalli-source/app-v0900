@@ -1,8 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '../lib/supabase';
-import { getProductComponents, checkCircularReference, processStockMovement, checkStockAvailability } from '../lib/product-operations';
 
-const MOCK_USER_ID = 'mock-user-' + (typeof window !== 'undefined' ? window.localStorage.getItem('currentUser') ? JSON.parse(window.localStorage.getItem('currentUser')!).id : '1' : '1');
+const MOCK_USER_ID = 'local-user-1';
 
 export interface Client {
   id: string;
@@ -171,6 +169,26 @@ export const useApp = () => {
   return context;
 };
 
+const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+const loadFromStorage = <T,>(key: string, defaultValue: T): T => {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : defaultValue;
+  } catch (error) {
+    console.error(`Error loading ${key}:`, error);
+    return defaultValue;
+  }
+};
+
+const saveToStorage = <T,>(key: string, value: T): void => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error(`Error saving ${key}:`, error);
+  }
+};
+
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -180,428 +198,144 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadAllData();
+    console.log('[AppContext] Loading data from localStorage...');
+
+    const loadedClients = loadFromStorage('clients', []);
+    const loadedProjects = loadFromStorage('projects', []);
+    const loadedTransactions = loadFromStorage('transactions', []);
+    const loadedProducts = loadFromStorage('products', []);
+    const loadedStockMovements = loadFromStorage('stockMovements', []);
+
+    const isFirstTime = loadedClients.length === 0 &&
+                        loadedProjects.length === 0 &&
+                        loadedProducts.length === 0;
+
+    if (isFirstTime) {
+      console.log('[AppContext] First time setup - adding demo data...');
+
+      const demoClient: Client = {
+        id: generateId(),
+        name: 'João Silva',
+        type: 'pf',
+        cpf: '123.456.789-00',
+        email: 'joao@email.com',
+        phone: '(11) 3333-4444',
+        mobile: '(11) 98888-7777',
+        fl_ativo: true,
+        address: {
+          country: 'Brasil',
+          state: 'SP',
+          city: 'São Paulo',
+          zipCode: '01310-100',
+          neighborhood: 'Centro',
+          streetType: 'Rua',
+          street: 'Exemplo'
+        },
+        created_at: new Date().toISOString(),
+        total_projects: 0,
+        total_value: 0
+      };
+
+      const demoProduct: Product = {
+        id: generateId(),
+        name: 'Madeira Compensada',
+        description: 'Compensado 15mm',
+        category: 'Madeiras',
+        type: 'material_bruto',
+        unit: 'M²',
+        components: [],
+        cost_price: 120.00,
+        sale_price: 180.00,
+        current_stock: 50,
+        min_stock: 10,
+        created_at: new Date().toISOString()
+      };
+
+      setClients([demoClient]);
+      setProducts([demoProduct]);
+      setProjects([]);
+      setTransactions([]);
+      setStockMovements([]);
+
+      saveToStorage('clients', [demoClient]);
+      saveToStorage('products', [demoProduct]);
+      saveToStorage('projects', []);
+      saveToStorage('transactions', []);
+      saveToStorage('stockMovements', []);
+    } else {
+      setClients(loadedClients);
+      setProjects(loadedProjects);
+      setTransactions(loadedTransactions);
+      setProducts(loadedProducts);
+      setStockMovements(loadedStockMovements);
+    }
+
+    setLoading(false);
+    console.log('[AppContext] Data loaded successfully');
   }, []);
 
-  const loadAllData = async () => {
-    setLoading(true);
-    try {
-      await Promise.all([
-        loadProducts(),
-        loadClients(),
-        loadProjects(),
-        loadTransactions(),
-        loadStockMovements()
-      ]);
-    } catch (error) {
-      console.error('Error loading data:', error);
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (!loading) {
+      saveToStorage('clients', clients);
     }
-  };
+  }, [clients, loading]);
 
-  const loadProducts = async () => {
-    const { data, error } = await supabase
-      .from('products')
-      .select('*')
-      .eq('user_id', MOCK_USER_ID)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error loading products:', error);
-      return;
+  useEffect(() => {
+    if (!loading) {
+      saveToStorage('projects', projects);
     }
+  }, [projects, loading]);
 
-    const productsWithComponents = await Promise.all(
-      (data || []).map(async (product) => {
-        const components = await getProductComponents(product.id);
-        return {
-          ...product,
-          components,
-          sale_price: product.sale_price || undefined,
-          supplier: product.supplier || undefined
-        };
-      })
-    );
-
-    setProducts(productsWithComponents);
-  };
-
-  const loadClients = async () => {
-    const { data, error } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('user_id', MOCK_USER_ID)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error loading clients:', error);
-      return;
+  useEffect(() => {
+    if (!loading) {
+      saveToStorage('transactions', transactions);
     }
+  }, [transactions, loading]);
 
-    const clientsWithStats = (data || []).map(client => ({
-      ...client,
-      address: {
-        country: client.country,
-        state: client.state,
-        city: client.city,
-        zipCode: client.zip_code,
-        neighborhood: client.neighborhood,
-        streetType: client.street_type,
-        street: client.street
-      },
-      total_projects: 0,
-      total_value: 0
-    }));
-
-    setClients(clientsWithStats);
-  };
-
-  const loadProjects = async () => {
-    const { data, error } = await supabase
-      .from('projects')
-      .select(`
-        *,
-        client:clients(name),
-        project_products(*)
-      `)
-      .eq('user_id', MOCK_USER_ID)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error loading projects:', error);
-      return;
+  useEffect(() => {
+    if (!loading) {
+      saveToStorage('products', products);
     }
+  }, [products, loading]);
 
-    const projectsFormatted = (data || []).map((project: any) => ({
-      ...project,
-      client_name: project.client?.name,
-      products: (project.project_products || []).map((pp: any) => ({
-        id: pp.id,
-        product_id: pp.product_id,
-        product_name: products.find(p => p.id === pp.product_id)?.name || '',
-        quantity: pp.quantity,
-        unit_price: pp.unit_price,
-        total_price: pp.total_price
-      })),
-      payment_terms: project.payment_method ? {
-        installments: project.payment_installments,
-        payment_method: project.payment_method,
-        discount_percentage: project.discount_percentage,
-        installment_value: project.budget / project.payment_installments,
-        total_with_discount: project.budget * (1 - project.discount_percentage / 100)
-      } : undefined
-    }));
-
-    setProjects(projectsFormatted);
-  };
-
-  const loadTransactions = async () => {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select(`
-        *,
-        project:projects(title)
-      `)
-      .eq('user_id', MOCK_USER_ID)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error loading transactions:', error);
-      return;
+  useEffect(() => {
+    if (!loading) {
+      saveToStorage('stockMovements', stockMovements);
     }
-
-    const transactionsFormatted = (data || []).map((transaction: any) => ({
-      ...transaction,
-      project_title: transaction.project?.title
-    }));
-
-    setTransactions(transactionsFormatted);
-  };
-
-  const loadStockMovements = async () => {
-    const { data, error } = await supabase
-      .from('stock_movements')
-      .select(`
-        *,
-        product:products(name),
-        project:projects(title)
-      `)
-      .eq('user_id', MOCK_USER_ID)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error loading stock movements:', error);
-      return;
-    }
-
-    const movementsFormatted = (data || []).map((movement: any) => ({
-      id: movement.id,
-      product_id: movement.product_id,
-      product_name: movement.product?.name || '',
-      type: movement.movement_type,
-      quantity: movement.quantity,
-      unit_price: movement.unit_price,
-      total_value: movement.total_value,
-      project_id: movement.project_id,
-      project_title: movement.project?.title,
-      date: movement.date,
-      created_at: movement.created_at
-    }));
-
-    setStockMovements(movementsFormatted);
-  };
-
-  const addProduct = async (productData: Omit<Product, 'id' | 'created_at'>) => {
-    const { data: newProduct, error: productError } = await supabase
-      .from('products')
-      .insert({
-        name: productData.name,
-        description: productData.description,
-        category: productData.category,
-        type: productData.type,
-        unit: productData.unit,
-        cost_price: productData.cost_price,
-        sale_price: productData.sale_price || null,
-        current_stock: productData.current_stock,
-        min_stock: productData.min_stock,
-        supplier: productData.supplier || null,
-        user_id: MOCK_USER_ID
-      })
-      .select()
-      .single();
-
-    if (productError) {
-      console.error('Error adding product:', productError);
-      throw productError;
-    }
-
-    if (productData.components && productData.components.length > 0) {
-      for (const component of productData.components) {
-        const hasCircularRef = await checkCircularReference(newProduct.id, component.product_id);
-        if (hasCircularRef) {
-          await supabase.from('products').delete().eq('id', newProduct.id);
-          throw new Error('Referência circular detectada: um produto não pode usar a si mesmo como componente.');
-        }
-
-        await supabase.from('product_components').insert({
-          product_id: newProduct.id,
-          component_id: component.product_id,
-          quantity: component.quantity,
-          user_id: MOCK_USER_ID
-        });
-      }
-    }
-
-    await loadProducts();
-  };
-
-  const updateProduct = async (product: Product) => {
-    const { error: productError } = await supabase
-      .from('products')
-      .update({
-        name: product.name,
-        description: product.description,
-        category: product.category,
-        type: product.type,
-        unit: product.unit,
-        cost_price: product.cost_price,
-        sale_price: product.sale_price || null,
-        current_stock: product.current_stock,
-        min_stock: product.min_stock,
-        supplier: product.supplier || null
-      })
-      .eq('id', product.id);
-
-    if (productError) {
-      console.error('Error updating product:', productError);
-      throw productError;
-    }
-
-    await supabase
-      .from('product_components')
-      .delete()
-      .eq('product_id', product.id);
-
-    if (product.components && product.components.length > 0) {
-      for (const component of product.components) {
-        const hasCircularRef = await checkCircularReference(product.id, component.product_id);
-        if (hasCircularRef) {
-          throw new Error('Referência circular detectada: um produto não pode usar a si mesmo como componente.');
-        }
-
-        await supabase.from('product_components').insert({
-          product_id: product.id,
-          component_id: component.product_id,
-          quantity: component.quantity,
-          user_id: MOCK_USER_ID
-        });
-      }
-    }
-
-    await loadProducts();
-  };
-
-  const deleteProduct = async (id: string) => {
-    const { data: usedIn } = await supabase
-      .from('product_components')
-      .select('product_id')
-      .eq('component_id', id);
-
-    if (usedIn && usedIn.length > 0) {
-      throw new Error('Este produto é usado como componente em outros produtos e não pode ser excluído.');
-    }
-
-    const { error } = await supabase
-      .from('products')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      console.error('Error deleting product:', error);
-      throw error;
-    }
-
-    await loadProducts();
-  };
+  }, [stockMovements, loading]);
 
   const addClient = async (clientData: Omit<Client, 'id' | 'created_at'>) => {
-    const { error } = await supabase
-      .from('clients')
-      .insert({
-        name: clientData.name,
-        type: clientData.type,
-        cpf: clientData.cpf || null,
-        cnpj: clientData.cnpj || null,
-        email: clientData.email,
-        phone: clientData.phone,
-        mobile: clientData.mobile,
-        razao_social: clientData.razao_social || null,
-        inscricao_estadual: clientData.inscricao_estadual || null,
-        isento_icms: clientData.isento_icms || false,
-        numero: clientData.numero || null,
-        complemento: clientData.complemento || null,
-        id_empresa: clientData.id_empresa || null,
-        fl_ativo: clientData.fl_ativo,
-        country: clientData.address.country,
-        state: clientData.address.state,
-        city: clientData.address.city,
-        zip_code: clientData.address.zipCode,
-        neighborhood: clientData.address.neighborhood,
-        street_type: clientData.address.streetType,
-        street: clientData.address.street,
-        user_id: MOCK_USER_ID
-      });
-
-    if (error) {
-      console.error('Error adding client:', error);
-      throw error;
-    }
-
-    await loadClients();
+    const newClient: Client = {
+      ...clientData,
+      id: generateId(),
+      created_at: new Date().toISOString()
+    };
+    setClients(prev => [newClient, ...prev]);
   };
 
   const updateClient = async (id: string, updates: Partial<Client>) => {
-    const updateData: any = { ...updates };
-
-    if (updates.address) {
-      updateData.country = updates.address.country;
-      updateData.state = updates.address.state;
-      updateData.city = updates.address.city;
-      updateData.zip_code = updates.address.zipCode;
-      updateData.neighborhood = updates.address.neighborhood;
-      updateData.street_type = updates.address.streetType;
-      updateData.street = updates.address.street;
-      delete updateData.address;
-    }
-
-    delete updateData.total_projects;
-    delete updateData.total_value;
-    delete updateData.id;
-    delete updateData.created_at;
-
-    const { error } = await supabase
-      .from('clients')
-      .update(updateData)
-      .eq('id', id);
-
-    if (error) {
-      console.error('Error updating client:', error);
-      throw error;
-    }
-
-    await loadClients();
+    setClients(prev => prev.map(client =>
+      client.id === id ? { ...client, ...updates } : client
+    ));
   };
 
   const deleteClient = async (id: string) => {
-    const { error } = await supabase
-      .from('clients')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      console.error('Error deleting client:', error);
-      throw error;
-    }
-
-    await loadClients();
-    await loadProjects();
+    setClients(prev => prev.filter(client => client.id !== id));
   };
 
   const addProject = async (projectData: Omit<Project, 'id' | 'created_at' | 'number'>) => {
-    const { data: maxNumberResult } = await supabase
-      .from('projects')
-      .select('number')
-      .eq('user_id', MOCK_USER_ID)
-      .order('number', { ascending: false })
-      .limit(1);
+    const projectNumber = projects.length > 0
+      ? Math.max(...projects.map(p => p.number)) + 1
+      : 1;
 
-    const projectNumber = (maxNumberResult && maxNumberResult[0]?.number || 0) + 1;
+    const newProject: Project = {
+      ...projectData,
+      id: generateId(),
+      number: projectNumber,
+      created_at: new Date().toISOString()
+    };
 
-    const { data: newProject, error: projectError } = await supabase
-      .from('projects')
-      .insert({
-        number: projectNumber,
-        client_id: projectData.client_id,
-        title: projectData.title,
-        description: projectData.description,
-        status: projectData.status,
-        type: projectData.type,
-        budget: projectData.budget,
-        start_date: projectData.start_date,
-        end_date: projectData.end_date,
-        materials_cost: projectData.materials_cost || 0,
-        labor_cost: projectData.labor_cost || 0,
-        profit_margin: projectData.profit_margin || 20,
-        payment_installments: projectData.payment_terms?.installments || 1,
-        payment_method: projectData.payment_terms?.payment_method || null,
-        discount_percentage: projectData.payment_terms?.discount_percentage || 0,
-        user_id: MOCK_USER_ID
-      })
-      .select()
-      .single();
-
-    if (projectError) {
-      console.error('Error adding project:', projectError);
-      throw projectError;
-    }
-
-    if (projectData.products && projectData.products.length > 0) {
-      for (const product of projectData.products) {
-        await supabase.from('project_products').insert({
-          project_id: newProject.id,
-          product_id: product.product_id,
-          quantity: product.quantity,
-          unit_price: product.unit_price,
-          total_price: product.total_price,
-          user_id: MOCK_USER_ID
-        });
-      }
-
-      if (projectData.type === 'venda' && projectData.status !== 'orcamento') {
-        await processProjectStockMovement(newProject.id, projectData.products);
-      }
-    }
+    setProjects(prev => [newProject, ...prev]);
 
     if (projectData.type === 'venda' && projectData.status !== 'orcamento') {
       const signalAmount = projectData.budget * 0.5;
@@ -614,38 +348,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         amount: signalAmount,
         date: new Date().toISOString().split('T')[0]
       });
-    }
 
-    await loadProjects();
+      if (projectData.products && projectData.products.length > 0) {
+        await processProjectStockMovement(newProject.id, projectData.products);
+      }
+    }
   };
 
   const updateProject = async (id: string, updates: Partial<Project>) => {
-    const updateData: any = { ...updates };
-
-    if (updates.payment_terms) {
-      updateData.payment_installments = updates.payment_terms.installments;
-      updateData.payment_method = updates.payment_terms.payment_method;
-      updateData.discount_percentage = updates.payment_terms.discount_percentage;
-      delete updateData.payment_terms;
-    }
-
-    delete updateData.id;
-    delete updateData.created_at;
-    delete updateData.number;
-    delete updateData.client_name;
-    delete updateData.products;
-
-    const { error } = await supabase
-      .from('projects')
-      .update(updateData)
-      .eq('id', id);
-
-    if (error) {
-      console.error('Error updating project:', error);
-      throw error;
-    }
-
     const project = projects.find(p => p.id === id);
+
+    setProjects(prev => prev.map(p =>
+      p.id === id ? { ...p, ...updates } : p
+    ));
+
     if (updates.status === 'concluido' && project && project.status !== 'concluido') {
       const remainingAmount = project.budget * 0.5;
       await addTransaction({
@@ -658,78 +374,133 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         date: new Date().toISOString().split('T')[0]
       });
     }
-
-    await loadProjects();
   };
 
   const deleteProject = async (id: string) => {
-    const { error } = await supabase
-      .from('projects')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      console.error('Error deleting project:', error);
-      throw error;
-    }
-
-    await loadProjects();
-    await loadTransactions();
-    await loadStockMovements();
+    setProjects(prev => prev.filter(project => project.id !== id));
+    setTransactions(prev => prev.filter(t => t.project_id !== id));
+    setStockMovements(prev => prev.filter(sm => sm.project_id !== id));
   };
 
   const addTransaction = async (transactionData: Omit<Transaction, 'id' | 'created_at'>) => {
-    const { error } = await supabase
-      .from('transactions')
-      .insert({
-        project_id: transactionData.project_id || null,
-        type: transactionData.type,
-        category: transactionData.category,
-        description: transactionData.description,
-        amount: transactionData.amount,
-        date: transactionData.date,
-        user_id: MOCK_USER_ID
-      });
+    const newTransaction: Transaction = {
+      ...transactionData,
+      id: generateId(),
+      created_at: new Date().toISOString()
+    };
+    setTransactions(prev => [newTransaction, ...prev]);
+  };
 
-    if (error) {
-      console.error('Error adding transaction:', error);
-      throw error;
+  const checkCircularReference = (productId: string, componentId: string): boolean => {
+    if (productId === componentId) return true;
+
+    const product = products.find(p => p.id === componentId);
+    if (!product || !product.components) return false;
+
+    for (const comp of product.components) {
+      if (checkCircularReference(productId, comp.product_id)) {
+        return true;
+      }
     }
 
-    await loadTransactions();
+    return false;
+  };
+
+  const addProduct = async (productData: Omit<Product, 'id' | 'created_at'>) => {
+    if (productData.components && productData.components.length > 0) {
+      const tempId = generateId();
+      for (const component of productData.components) {
+        if (checkCircularReference(tempId, component.product_id)) {
+          throw new Error('Referência circular detectada: um produto não pode usar a si mesmo como componente.');
+        }
+      }
+    }
+
+    const newProduct: Product = {
+      ...productData,
+      id: generateId(),
+      created_at: new Date().toISOString()
+    };
+    setProducts(prev => [newProduct, ...prev]);
+  };
+
+  const updateProduct = async (product: Product) => {
+    if (product.components && product.components.length > 0) {
+      for (const component of product.components) {
+        if (checkCircularReference(product.id, component.product_id)) {
+          throw new Error('Referência circular detectada: um produto não pode usar a si mesmo como componente.');
+        }
+      }
+    }
+
+    setProducts(prev => prev.map(p =>
+      p.id === product.id ? product : p
+    ));
+  };
+
+  const deleteProduct = async (id: string) => {
+    const usedIn = products.some(p =>
+      p.components && p.components.some(c => c.product_id === id)
+    );
+
+    if (usedIn) {
+      throw new Error('Este produto é usado como componente em outros produtos e não pode ser excluído.');
+    }
+
+    setProducts(prev => prev.filter(product => product.id !== id));
   };
 
   const addStockMovement = async (movementData: Omit<StockMovement, 'id' | 'created_at'>) => {
-    await processStockMovement(
-      movementData.product_id,
-      movementData.quantity,
-      movementData.type,
-      MOCK_USER_ID,
-      movementData.project_id,
-      false
-    );
+    const newMovement: StockMovement = {
+      ...movementData,
+      id: generateId(),
+      created_at: new Date().toISOString()
+    };
+    setStockMovements(prev => [newMovement, ...prev]);
 
-    await loadProducts();
-    await loadStockMovements();
+    setProducts(prev => prev.map(p => {
+      if (p.id === movementData.product_id) {
+        const newStock = movementData.type === 'entrada'
+          ? p.current_stock + movementData.quantity
+          : p.current_stock - movementData.quantity;
+        return { ...p, current_stock: newStock };
+      }
+      return p;
+    }));
   };
 
   const processProjectStockMovement = async (projectId: string, projectProducts: ProjectProduct[]) => {
     for (const projectProduct of projectProducts) {
       const product = products.find(p => p.id === projectProduct.product_id);
       if (product) {
-        await processStockMovement(
-          product.id,
-          projectProduct.quantity,
-          'saida',
-          MOCK_USER_ID,
-          projectId,
-          true
-        );
+        await addStockMovement({
+          product_id: product.id,
+          product_name: product.name,
+          type: 'saida',
+          quantity: projectProduct.quantity,
+          unit_price: projectProduct.unit_price,
+          total_value: projectProduct.total_price,
+          project_id: projectId,
+          date: new Date().toISOString().split('T')[0]
+        });
+
+        if (product.type !== 'material_bruto' && product.components) {
+          for (const component of product.components) {
+            const totalQuantity = component.quantity * projectProduct.quantity;
+            await addStockMovement({
+              product_id: component.product_id,
+              product_name: component.product_name,
+              type: 'saida',
+              quantity: totalQuantity,
+              unit_price: component.unit_cost,
+              total_value: component.total_cost * projectProduct.quantity,
+              project_id: projectId,
+              date: new Date().toISOString().split('T')[0]
+            });
+          }
+        }
       }
     }
-
-    await loadProducts();
-    await loadStockMovements();
   };
 
   const calculateProductCost = async (productId: string): Promise<number> => {
@@ -855,17 +626,50 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     downloadCSV(csvContent, 'transacoes.csv');
   };
 
+  const downloadCSV = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const parseCSVLine = (line: string): string[] => {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+
+    result.push(current.trim());
+    return result;
+  };
+
   const importClientsCSV = async (file: File): Promise<void> => {
     const text = await file.text();
     const lines = text.split('\n');
-    const headers = lines[0].split(',').map(h => h.replace(/"/g, ''));
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
 
       const values = parseCSVLine(line);
-      if (values.length < headers.length) continue;
+      if (values.length < 10) continue;
 
       const clientData: Omit<Client, 'id' | 'created_at'> = {
         name: values[1] || '',
@@ -983,40 +787,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       await addTransaction(transactionData);
     }
-  };
-
-  const downloadCSV = (content: string, filename: string) => {
-    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const parseCSVLine = (line: string): string[] => {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (char === ',' && !inQuotes) {
-        result.push(current.trim());
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-
-    result.push(current.trim());
-    return result;
   };
 
   const getDashboardStats = () => {

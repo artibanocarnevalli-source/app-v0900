@@ -25,36 +25,24 @@ export const StorageProvider: React.FC<{ children: ReactNode }> = ({ children })
   useEffect(() => {
     const initialize = async () => {
       try {
-        const envUrl = import.meta.env.VITE_SUPABASE_URL;
-        const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        console.log('[StorageContext] Starting initialization...');
 
-        const savedConfig = localStorage.getItem('storage_config');
-        let config: any = {
+        const config: any = {
           provider: 'local',
           autoSync: false,
           syncStrategy: 'newest-wins'
         };
 
-        if (savedConfig) {
-          try {
-            config = JSON.parse(savedConfig);
-          } catch (error) {
-            console.error('Failed to parse saved config:', error);
-          }
-        }
-
-        if (envUrl && envKey && !config.supabase) {
-          config.supabase = {
-            url: envUrl,
-            anonKey: envKey
-          };
-        }
-
+        console.log('[StorageContext] Initializing with local-only config');
         const manager = await initializeStorage(config);
+        console.log('[StorageContext] Storage manager initialized successfully');
+
         setStorageManager(manager);
         setIsInitialized(true);
       } catch (error) {
-        console.error('Failed to initialize storage:', error);
+        console.error('[StorageContext] Failed to initialize storage:', error);
+        const fallbackManager = await initializeStorage({ provider: 'local' });
+        setStorageManager(fallbackManager);
         setIsInitialized(true);
       }
     };
